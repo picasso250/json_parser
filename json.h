@@ -53,6 +53,19 @@ tuple<error, json_array, string> _eat_array(const string str);
 tuple<error, json_object, string> _eat_object(const string str);
 tuple<error, string, string> _eat_string(const string str);
 
+string _eat_empty(const string str)
+{
+	string rest;
+	int i;
+	for (i = 0; i < str.size(); ++i)
+	{
+		if (str[i] == ' ' || str[i] == '\t' || str[i] == '\n' || str[i] == '\r') {
+		} else {
+			break;
+		}
+	}
+	return str.substr(i);
+}
 pair<error, string> _eat(const string str, const string shouldbe)
 {
 	error err;
@@ -62,7 +75,7 @@ pair<error, string> _eat(const string str, const string shouldbe)
 	{
 		if (i < str.size() && str[i] == shouldbe[i]) {
 		} else {
-			return make_pair("not match", rest);
+			return make_pair("value not match", rest);
 		}
 	}
 	rest = str.substr(i);
@@ -73,17 +86,23 @@ tuple<error, json_array, string> _eat_array(const string str)
 	error err;
 	vector<json_type> res;
 	string rest = str.substr(1);
+	rest = _eat_empty(rest);
 	if (rest.empty()) {
 		return make_tuple("open '[' not close", res, rest);
 	}
 	while (1) {
-		tuple<error, json_type, string> r = _json_parse_(rest);
-		err = get<0>(r);
+		rest = _eat_empty(rest);
+		if (rest[0] == ']') {
+			rest = rest.substr(1);
+			return make_tuple(OK, res, rest);
+		}
+		json_type j;
+		tie(err, j, rest) = _json_parse_(rest);
 		if (err != OK) {
 			return make_tuple(err, res, rest);
 		}
-		res.push_back(get<1>(r));
-		rest = get<2>(r);
+		res.push_back(j);
+		rest = _eat_empty(rest);
 		if (rest.empty()) {
 			return make_tuple("expect ']'", res, rest);
 		}
@@ -114,6 +133,10 @@ tuple<error, json_object, string> _eat_object(const string str)
 		if (rest.empty()) {
 			// err();
 			return make_tuple("expect a string", res, rest);
+		}
+		if (rest[0] == '}') {
+			rest = rest.substr(1);
+			return make_tuple(OK, res, rest);
 		}
 		if (rest[0] != '"') {
 			// err();
@@ -147,7 +170,7 @@ tuple<error, json_object, string> _eat_object(const string str)
 		if (rest[0] == ',') {
 			rest = rest.substr(1);
 			continue;
-		} else if (rest[1] == '}') {
+		} else if (rest[0] == '}') {
 			rest = rest.substr(1);
 			return make_tuple(OK, res, rest);
 		}
@@ -264,25 +287,22 @@ tuple<error, string, string> _eat_string(const string str)
 						}
 						res += ur.second;
 					} else {
-						// err();
 						return make_tuple("expect utf8", res, rest);
 					}
 				} else {
-					auto it = m.find(c);
+					auto it = m.find(next);
 					if (it != m.end()) {
+						// cout<<"escape "<<next<<" "<<it->first<<endl;
 						res += it->second;
 					} else {
-						// err();
 						return make_tuple("'\\' followed by unkown escape", res, rest);
 					}
 				}
 			} else {
-				// err();
 				return make_tuple("'\\' not followed", res, rest);
 			}
-		} else
-		if (c == '"') {
-			return make_tuple(OK, res, rest);
+		} else if (c == '"') {
+			return make_tuple(OK, res, rest.substr(i+1));
 		} else {
 			res += c;
 		}
@@ -295,67 +315,67 @@ tuple<error, json_type, string> _json_parse_(const string str)
 	error err;
 	json_type j;
 	string rest;
-	if (str.empty()) {
-		// err();
-		return make_tuple("string empty", j, rest);
+	rest = _eat_empty(str);
+	if (rest.empty()) {
+		return make_tuple("expect value", j, rest);
 	}
+	// cout<<rest<<endl;
 	int pos;
-	if (str[0] == 'n') {
-		auto r = _eat(str, "null");
+	if (rest[0] == 'n') {
+		auto r = _eat(rest, "null");
 		if (r.first != OK) {
-			// err();
 			return make_tuple("expect null", j, rest);
 		} else {
 			return make_tuple(OK, j, r.second);
 		}
-	} else if (str[0] == 'f') {
-		auto r = _eat(str, "false");
+	} else if (rest[0] == 'f') {
+		auto r = _eat(rest, "false");
 		if (r.first != OK) {
-			// err();
 			return make_tuple("expect false", j, rest);
 		} else {
 			j = json_type(false);
 			return make_tuple(OK, j, r.second);
 		}
-	} else if (str[0] == 't') {
-		auto r = _eat(str, "true");
+	} else if (rest[0] == 't') {
+		auto r = _eat(rest, "true");
 		if (r.first != OK) {
-			// err();
 			return make_tuple("expect true", j, rest);
 		} else {
 			j = json_type(true);
 			return make_tuple(OK, j, r.second);
 		}
-	} else if (str[0] == '-' || isdigit(str[0])) {
-		size_t endpos;
-		double d = stod(str, &endpos);
-		if (endpos != str.size())
-		{
-			return make_tuple("expect digit", j, str.substr(endpos));
-		}
+	} else if (rest[0] == '-' || isdigit(rest[0])) {
+		size_t endpos = 0;
+		// cout<<rest<<endl;
+		double d = stod(rest, &endpos);
+		// cout<<endpos<<" "<<rest.size()<<endl;
+		// if (endpos != rest.size())
+		// {
+		// 	return make_tuple("expect digit", j, rest.substr(endpos));
+		// }
 		j = json_type(d);
-		rest = str.substr(endpos);
+		rest = rest.substr(endpos);
 		return make_tuple(OK, j, rest);
-	} else if (str[0] == '"') {
-		auto rrr = _eat_string(str);
+	} else if (rest[0] == '"') {
+		auto rrr = _eat_string(rest);
 		err = get<0>(rrr);
 		if (err == OK)
 		{
 			j = json_type(get<1>(rrr));
 		}
 		return make_tuple(OK, j, get<2>(rrr));
-	} else if (str[0] == '[') {
+	} else if (rest[0] == '[') {
 		json_array a;
-		tie(err, a, rest) = _eat_array(str);
+		tie(err, a, rest) = _eat_array(rest);
 		j = json_type(a);
-		return make_tuple(OK, j, rest);
-	} else if (str[0] == '{') {
+		return make_tuple(err, j, rest);
+	} else if (rest[0] == '{') {
 		json_object o;
-		tie(err, o, rest) = _eat_object(str);
+		tie(err, o, rest) = _eat_object(rest);
 		j = json_type(o);
-		return make_tuple(OK, j, rest);
+		return make_tuple(err, j, rest);
 	} else {
-		return make_tuple("not good", j, rest);
+		return make_tuple("invalid value", j, rest);
 	}
 }
 
@@ -365,6 +385,10 @@ pair<error, json_type> json_parse(const string str)
 	json_type j;
 	string rest;
 	tie(err, j, rest) = _json_parse_(str);
+	if (err != OK) {
+		return make_pair(err, j);
+	}
+	rest = _eat_empty(rest);
 	if (rest.empty())
 	{
 		return make_pair(OK, j);
