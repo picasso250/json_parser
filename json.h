@@ -90,12 +90,12 @@ tuple<error, json_array, string> _eat_array(const string str)
 	if (rest.empty()) {
 		return make_tuple("open '[' not close", res, rest);
 	}
+	if (rest[0] == ']') {
+		rest = rest.substr(1);
+		return make_tuple(OK, res, rest);
+	}
 	while (1) {
 		rest = _eat_empty(rest);
-		if (rest[0] == ']') {
-			rest = rest.substr(1);
-			return make_tuple(OK, res, rest);
-		}
 		json_type j;
 		tie(err, j, rest) = _json_parse_(rest);
 		if (err != OK) {
@@ -122,25 +122,26 @@ tuple<error, json_object, string> _eat_object(const string str)
 {
 	error err;
 	json_object res;
-	string rest = str.substr(1);
+	string rest = str.substr(1); // eat '{'
 	if (rest.empty()) {
-		// err();
 		return make_tuple("open '{' not close", res, rest);
 	}
+	// cout<<"open object"<<endl;
+	rest = _eat_empty(rest);
+	if (rest[0] == '}') {
+		rest = rest.substr(1);
+		// cout<<"close object now!"<<endl;
+		return make_tuple(OK, res, rest);
+	}
 	while (1) {
+		rest = _eat_empty(rest);
 		string key;
 		json_type value;
 		if (rest.empty()) {
-			// err();
 			return make_tuple("expect a string", res, rest);
-		}
-		if (rest[0] == '}') {
-			rest = rest.substr(1);
-			return make_tuple(OK, res, rest);
 		}
 		if (rest[0] != '"') {
-			// err();
-			return make_tuple("expect a string", res, rest);
+			return make_tuple("expect key string \"", res, rest);
 		}
 		auto sr = _eat_string(rest);
 		err = get<0>(sr);
@@ -149,20 +150,22 @@ tuple<error, json_object, string> _eat_object(const string str)
 		}
 		key = get<1>(sr);
 		rest = get<2>(sr);
+		rest = _eat_empty(rest);
 		if (rest.empty()) {
-			// err();
 			return make_tuple("expect ':'", res, rest);
 		}
 		if (rest[0] != ':') {
-			// err();
 			return make_tuple("expect ':'", res, rest);
 		}
-		rest = rest.substr(1);
+		rest = rest.substr(1); // eat ':'
+		rest = _eat_empty(rest);
 		tie(err, value, rest) = _json_parse_(rest);
 		if (err != OK) {
 			return make_tuple(err, res, rest);
 		}
 		res[key] = value;
+		// cout<<"found key : "<<key<<endl;
+		rest = _eat_empty(rest);
 		if (rest.empty())
 		{
 			return make_tuple("expect '}' or ','", res, rest);
@@ -172,6 +175,7 @@ tuple<error, json_object, string> _eat_object(const string str)
 			continue;
 		} else if (rest[0] == '}') {
 			rest = rest.substr(1);
+			// cout<<"object close"<<endl;
 			return make_tuple(OK, res, rest);
 		}
 	}
@@ -181,13 +185,13 @@ pair<error, unsigned long> _utf8(const string str)
 {
 	error err;
 	unsigned long code_point;
-	char** endptr;
-	code_point = stol(str, nullptr, 16);
-	if (endptr)
+	size_t size;
+	code_point = stol(str, &size, 16);
+	if (size != str.size())
 	{
-		return make_pair(err, code_point);
+		return make_pair("utf8 surrogate not vaild", code_point);
 	}
-	return make_pair(err, code_point);
+	return make_pair(OK, code_point);
 }
 pair<error, string> _utf8_str(unsigned long c)
 {
@@ -222,7 +226,6 @@ pair<error, string> _utf8_str(unsigned long c)
 		str += c4;
 		return make_pair(OK, str);
 	}
-	// err();
 	return make_pair("unvalid code point", str);
 }
 tuple<error, string, string> _eat_string(const string str)
@@ -251,32 +254,28 @@ tuple<error, string, string> _eat_string(const string str)
 				if (next == 'u') {
 					i++;
 					if (i + 4 < rest.size()) {
-						string cs1(rest, i, i+4);
-						auto cc1 = _utf8(cs1);
-						err = cc1.first;
+						string cs1(rest, i, 4);
+						unsigned long c;
+						tie(err, c) = _utf8(cs1);
 						if (err != OK) return make_tuple(err, res, rest);
 						i += 4;
-						unsigned long c = cc1.second;
 						if (0xD800 <= c && c <= 0xDBFF) {
 							if (i+6 < rest.size()) {
 								if (rest[i] != '\\') {
-									// err();
 									return make_tuple("invalid surrogate", res, rest);
 								}
 								i++;
 								if (rest[i] != 'u') {
-									// err();
 									return make_tuple("invalid surrogate", res, rest);
 								}
 								i++;
-								string cs2(rest, i, i+4);
+								string cs2(rest, i, 4);
 								auto cc2 = _utf8(cs1);
 								err = cc2.first;
 								if (err != OK) return make_tuple(err, res, rest);
 								unsigned long c2 = cc2.second;
 								c = 0x10000+(c-0xD800)*0x400+(c2-0xdc00);
 							}else{
-								// err();
 								return make_tuple("invalid surrogate", res, rest);
 							}
 						}
@@ -292,7 +291,6 @@ tuple<error, string, string> _eat_string(const string str)
 				} else {
 					auto it = m.find(next);
 					if (it != m.end()) {
-						// cout<<"escape "<<next<<" "<<it->first<<endl;
 						res += it->second;
 					} else {
 						return make_tuple("'\\' followed by unkown escape", res, rest);
@@ -319,7 +317,6 @@ tuple<error, json_type, string> _json_parse_(const string str)
 	if (rest.empty()) {
 		return make_tuple("expect value", j, rest);
 	}
-	// cout<<rest<<endl;
 	int pos;
 	if (rest[0] == 'n') {
 		auto r = _eat(rest, "null");
@@ -346,9 +343,7 @@ tuple<error, json_type, string> _json_parse_(const string str)
 		}
 	} else if (rest[0] == '-' || isdigit(rest[0])) {
 		size_t endpos = 0;
-		// cout<<rest<<endl;
 		double d = stod(rest, &endpos);
-		// cout<<endpos<<" "<<rest.size()<<endl;
 		// if (endpos != rest.size())
 		// {
 		// 	return make_tuple("expect digit", j, rest.substr(endpos));
@@ -387,6 +382,10 @@ pair<error, json_type> json_parse(const string str)
 	tie(err, j, rest) = _json_parse_(str);
 	if (err != OK) {
 		return make_pair(err, j);
+	}
+	if (j.type != json_type::ARRAY && j.type != json_type::OBJECT)
+	{
+		return make_pair("json not array or object", j);
 	}
 	rest = _eat_empty(rest);
 	if (rest.empty())
